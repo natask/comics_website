@@ -1,11 +1,10 @@
 'use client';
 import Image from "next/image";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 interface HistoryItem {
   prompt: string;
-  imageUrl: string;
-  timestamp: number;
+  image_url: string;
 }
 
 export default function Home() {
@@ -13,6 +12,31 @@ export default function Home() {
   const [currentImage, setCurrentImage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [history, setHistory] = useState<HistoryItem[]>([]);
+
+  useEffect(() => {
+    fetchHistory();
+  }, []);
+
+  const appendHistory = async () => {
+    try {
+      const response = await fetch(`https://sundai-backend-706780332553.us-east4.run.app/history?skip=0&limit=1`);
+      const data = await response.json();
+      
+      // Append new history items to the existing history
+      setHistory(prevHistory => [...data, ... prevHistory]);
+    } catch (error) {
+      console.error('Error fetching history:', error);
+    }
+  };
+  const fetchHistory = async (skip: number = 0, limit: number = 20) => {
+    try {
+      const response = await fetch(`https://sundai-backend-706780332553.us-east4.run.app/history?skip=${skip}&limit=${limit}`);
+      const data = await response.json();
+      setHistory(data);
+    } catch (error) {
+      console.error('Error fetching history:', error);
+    }
+  };
 
   const generateImage = async () => {
     setIsLoading(true);
@@ -26,20 +50,85 @@ export default function Home() {
       });
       
       const data = await response.json();
-      setCurrentImage(data.imageUrl);
+      setCurrentImage(data.imageUrl);     
       
-      // Add to history
-      const newHistoryItem = {
-        prompt,
-        imageUrl: data.imageUrl,
-        timestamp: Date.now(),
-      };
-      setHistory(prev => [newHistoryItem, ...prev]);
+      // Save to backend
+      await saveHistory({ prompt: prompt, image_url: data.imageUrl });
+
     } catch (error) {
       console.error('Error generating image:', error);
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const saveHistory = async (item: { prompt: string; image_url: string }) => {
+    try {
+      console.log( JSON.stringify(item));
+      await fetch('https://sundai-backend-706780332553.us-east4.run.app/save', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'content-type': 'image/webp'
+        },
+        body: JSON.stringify(item),
+      });
+      // Fetch history to append the new image
+      await appendHistory(); // Fetch the latest history
+    } catch (error) {
+      console.error('Error saving history:', error);
+    }
+  };
+
+  const ImageDisplay = ({ url, alt, className, width = 0, height = 0 }: { 
+    url: string, 
+    alt: string, 
+    className?: string,
+    width?: number,
+    height?: number 
+  }) => {
+    const [blobUrl, setBlobUrl] = useState<string>('');
+
+    useEffect(() => {
+      const convertToImage = async () => {
+        try {
+          const response = await fetch(url, {
+            method: 'GET',
+            cache: 'force-cache', // Use cached response if available
+          });
+          const blob = await response.blob();
+          const objectUrl = URL.createObjectURL(
+            new Blob([blob], { type: 'image/webp' })
+          );
+          setBlobUrl(objectUrl);
+        } catch (error) {
+          console.error('Error converting image:', error);
+        }
+      };
+      
+      convertToImage();
+      return () => {
+        if (blobUrl) URL.revokeObjectURL(blobUrl);
+      };
+    }, [url]);
+
+    if (!url) return null;
+    return width && height ? (
+      <Image
+        src={url}
+        alt={alt}
+        width={width}
+        height={height}
+        className={className}
+      />
+    ) : (
+      <Image
+        src={url}
+        alt={alt}
+        fill
+        className={className}
+      />
+    );
   };
 
   return (
@@ -48,25 +137,26 @@ export default function Home() {
       <div className="w-64 bg-gray-50 dark:bg-gray-800 overflow-y-auto h-screen p-4">
         <h2 className="text-lg font-bold mb-4">History</h2>
         <div className="space-y-4">
-          {history.map((item) => (
+          {history.map((item, index) => (
             <div 
-              key={item.timestamp}
+              key={index}
               className="p-3 bg-white dark:bg-gray-700 rounded-lg shadow cursor-pointer hover:shadow-md transition-shadow"
               onClick={() => {
                 setPrompt(item.prompt);
-                setCurrentImage(item.imageUrl);
+                setCurrentImage(item.image_url);
               }}
             >
-              <div className="flex items-center gap-2 mb-2">
-                <div className="w-8 h-8 relative">
-                  <Image
-                    src={item.imageUrl}
+              <div className="flex items-center gap-2 mb-2 h-12">
+                <div className="w-10 h-10 relative">
+                  <ImageDisplay
+                    url={item.image_url}
                     alt={item.prompt}
-                    fill
+                    width={40}
+                    height={40}
                     className="rounded-sm object-cover"
                   />
                 </div>
-                <p className="text-sm truncate">{item.prompt}</p>
+                <p className="text-xs w-32 max-h-12 overflow-hidden text-ellipsis whitespace-normal">{item.prompt}</p>
               </div>
             </div>
           ))}
@@ -97,10 +187,9 @@ export default function Home() {
           {currentImage && (
             <div className="border rounded-lg p-4 dark:border-gray-600">
               <div className="relative w-full aspect-square">
-                <Image
-                  src={currentImage}
+                <ImageDisplay
+                  url={currentImage}
                   alt={prompt}
-                  fill
                   className="rounded-lg object-contain"
                 />
               </div>
